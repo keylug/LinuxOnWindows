@@ -1,0 +1,124 @@
+# 01.00 Create hidden directory for ssh key pair
+mkdir ~/.ssh
+
+# 01.01 Next create the ssh key using the name provided below.
+ssh-keygen -t rsa -b 2048 -C "azureuser@lnx1azvm" -f ~/.ssh/linux.user.sshkey
+
+# 02.00 Create resource group in the eastus2 region
+az group create -l eastus2 --name rg1439 --verbose
+
+# 03.00 Create vnet
+az network vnet create -g rg1439 -n hub-vnt --address-prefixes 172.16.0.0/24 --verbose
+
+# 03.01 Create subnet in hub-vnt
+az network vnet subnet create --address-prefix 172.16.0.32/27 --name lnxsub --resource-group rg1439 --vnet-name hub-vnt --verbose
+
+# 04.00 Create lnxsub-nsg for lnxsub # 1 - create network security group
+az network nsg create --name lnxsub-nsg --resource-group rg1439 --location eastus2 --verbose
+
+# 04.00 Create Security Rules for lnxsub-nsg
+# 04.01 Create inbound ssh rule
+az network nsg rule create --name allowSshInbound \
+--nsg-name lnxsub-nsg \
+--priority 1000 \
+--resource-group rg1439 \
+--protocol Tcp \
+--source-port-ranges "*" \
+--destination-port-ranges 22 \
+--source-address-prefixes Internet \
+--destination-address-prefixes VirtualNetwork \
+--direction Inbound --access Allow --description ssh \
+--verbose
+
+# 04.02. Create inbound https rule
+az network nsg rule create --name allowHttpsInbound \
+--nsg-name lnxsub-nsg --priority 1100 \
+--resource-group rg1439 \
+--protocol Tcp \
+--source-port-ranges "*" \
+--destination-port-ranges 443 \
+--source-address-prefixes Internet \
+--destination-address-prefixes VirtualNetwork \
+--direction Inbound --access Allow \
+--description https \
+--verbose
+
+# 04.03 Create inbound http rule
+az network nsg rule create --name allowHttpInbound \
+--nsg-name lnxsub-nsg \
+--priority 1200 \
+--resource-group rg1439 \
+--protocol Tcp \
+--source-port-ranges "*" \
+--destination-port-ranges 80 \
+--source-address-prefixes Internet \
+--destination-address-prefixes VirtualNetwork \
+--direction Inbound \
+--access Allow \
+--description http \
+--verbose
+
+# 04.04 Associate nsg with subnet
+az network vnet subnet update --name lnxsub \
+--resource-group rg1439 \
+--vnet-name hub-vnt \
+--network-security-group lnxsub-nsg \
+--verbose
+
+# Create Linux CentOS 7.6 VM lnx1azvm # Refrence: https://docs.microsoft.com/en-us/cli/azure/vm?view=azure-cli-latest
+
+# 05.00 List current CentOS images
+az vm image list --offer CentOS --publisher OpenLogic --all --output table
+
+# 05.01 Creating Public IP Address resource
+az network public-ip create --resource-group rg1439 \
+--name lnx1azvm-pip \
+--allocation-method dynamic \
+--location eastus2 \
+--sku basic \
+--dns-name "a1103-lnxweb" \
+--verbose
+
+# 05.02 Creating Virtual Network Interface resource
+az network nic create --resource-group rg1439 \
+--name lnx1azvm-nic \
+--vnet-name hub-vnt \
+--accelerated-networking false \
+--subnet lnxsub \
+--network-security-group "" \
+--public-ip-address lnx1azvm-pip \
+--location eastus2 \
+--verbose
+
+# 05.03 Create storage account
+# Ref: https://stackoverflow.com/questions/3683434/custom-format-for-time-command
+# Get time as a UNIX timestamp (seconds elapsed since Jan 1, 1970 0:00 UTC)
+storageAccountName="$(date +%s)sta"
+az storage account create --name $storageAccountName --resource-group rg1439 --https-only --kind StorageV2 --location eastus2 --sku Standard_LRS --verbose
+
+# 05.03 Creating Virtual Machine
+az vm create --name lnx1azvm --resource-group rg1439 \
+--boot-diagnostics-storage $storageAccountName \
+--location eastus2 \
+--storage-sku Standard_LRS \
+--image CentOS \
+--size Standard_D1_v2 \
+--nics lnx1azvm-nic \
+--os-disk-name lnx1azvm-OsDisk_1 \
+--os-disk-size-gb 32 \
+--authentication-type ssh \
+--admin-username azureuser \
+--ssh-key-value "$(cat ~/.ssh/linux.user.sshkey.pub)" \
+--verbose
+
+# or #az vm create --name lnx1azvm \
+# --resource-group rg1439
+# --boot-diagnosticsstorage pocsadiag002sa1113 \
+# --location eastus2 \
+# --storage-sku Standard_LRS \
+# --image CentOS --size Standard_D1_v2 \
+# --nics lnx1azvm-nic \
+# --os-disk-name "lnx1azvm-OsDisk_1" \
+# --os-disk-size-gb 32 \
+# --authentication-type password \
+# --admin-username localadmin --admin-password "YourSecurePassword"
